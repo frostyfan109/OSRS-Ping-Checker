@@ -1,0 +1,8 @@
+beautifulsoup4==4.8.0
+aioping==0.2.0
+PyQt5==5.10.1
+tinycss==0.4
+matplotlib==2.1.0
+numpy==1.13.3
+pyfiglet==0.7
+QtAwesome==0.6.0

@@ -46,10 +46,13 @@
           </font>
          </property>
          <property name="styleSheet">
-          <string notr="true">color:gray;padding-top:10px;</string>
+          <string notr="true">color:#dddddd;margin-top:10px;</string>
          </property>
          <property name="text">
           <string>OSRS Ping Checker</string>
+         </property>
+         <property name="alignment">
+          <set>Qt::AlignCenter</set>
          </property>
         </widget>
        </item>

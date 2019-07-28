@@ -1,9 +1,9 @@
-from ping3 import ping as Ping
 from threading import Thread
 from PyQt5.QtWidgets import *
 from PyQt5.QtGui import QPixmap,QFont,QIcon,QPainter,QPen,QPalette,QColor,QPolygonF,QBrush,QPainterPath
 from PyQt5 import uic,QtCore
 import sys
+import qtawesome
 from datetime import datetime
 import os
 import requests
@@ -21,11 +21,54 @@ from matplotlib.colors import CSS4_COLORS as colors
 import random
 import logging
 from urllib.request import urlopen
+import osrsclimethods as climethods
+import argparse
+import const
 
 #cssutils.log.setLevel(logging.CRITICAL)
 
 colors = list(colors.values())
 
+
+
+if len(sys.argv) > 1:
+    parser = argparse.ArgumentParser(description='OSRS Ping Checker CLI')
+    parser.add_argument('-f','--free',default=False,action='store_true')
+    parser.add_argument('-m','--members',default=False,action='store_true')
+    parser.add_argument('-l','--limit',type=int,default=None,action='store')
+
+    args = parser.parse_args()
+    
+    con = climethods.ThreadedConsoleHandler()
+    con.daemon = True
+    free = args.free
+    members = args.members
+    worldLimit = args.limit
+    
+    con.start()
+    worlds = climethods.getWorlds(con)
+    worlds = climethods.filterWorlds(worlds,free,members)
+    con.progressTotal = len(tuple(worlds))
+    con.startProgress("Retrieving server latency:")
+    def worldPinged(world, worldsPinged):
+        con.progress = worldsPinged
+    worlds = climethods.pingWorlds(worlds,worldPinged)
+    worlds = sorted(worlds,key=lambda k:k["ping"])
+    while not con.done: #thread safe console output
+        pass
+    pingColors = {range(0,26):"#00ff00",range(26,51):"#00a500",range(51,101):"#b2f733",range(101,151):"#ffe500",range(151,200):"#ff8800"}
+    print("\r")
+    for enum,world in enumerate(worlds,0):
+        if worldLimit != False and enum >= worldLimit:
+            break
+        key = [i for i in list(pingColors.keys()) if world["ping"] in i]
+        if len(key) == 0:
+            pingColor = "#e01616"
+        else:
+            pingColor = pingColors[key[0]]
+        print(f"World {world['world']} ({world['country']}): {world['ping']} ping {'('+world['worldActivity']+')' if world['worldActivity'] != '' else ''}")
+    sys.exit()
+    
 
 app = QApplication(sys.argv)
 pix = QPixmap(os.path.join("images","splash3.png"))
@@ -277,18 +320,12 @@ class WorldFetcher(QtCore.QObject):
         #self.fetchingCompleteSignal.emit()
         self.pingTotalSignal.emit(len(worlds))
         times = {"title":"Latency by country","x":{"title":"Country","data":[]},"y":{"title":"Latency","data":[]}}
-        for pingCount,world in enumerate(tuple(worlds),1):
-            oldTime = time.time()
-            worldNumber = world["world"]-300
-            ping = getServerPing(worldNumber)
-            if ping == None:
-                worlds.remove(world)
-                continue
-            world["ping"] = math.floor(ping)
-            self.worldPingedSignal.emit(pingCount)
-            delta = time.time()-oldTime
+        def worldPinged(world,worldsPinged):
+            self.worldPingedSignal.emit(worldsPinged)
+        worlds = climethods.pingWorlds(worlds,worldPinged)
+        for world in worlds:
             times["x"]["data"].append(world["country"])
-            times["y"]["data"].append(ping)
+            times["y"]["data"].append(world["ping"])
         self.fetchingCompleteSignal.emit()
         if config["debugGraphs"]:
             self.pingDeltasSignal.emit(times)
@@ -598,7 +635,7 @@ class Console(QFrame):
             color:white;
         """)
         self.labels = []
-        self.emitText("Welcome to OSRS Ping Checker v0.4",css={"font-weight":"500","color":"lightgray"},flags={"center":True,"perm":True,"title":True})
+        self.emitText("Welcome to OSRS Ping Checker v"+const.VERSION,css={"font-weight":"500","color":"lightgray"},flags={"center":True,"perm":True,"title":True})
         #self.emitText("foo")
         #self.emitText("bar")
             
@@ -625,7 +662,7 @@ class Console(QFrame):
             self.images = countryImages(worlds)
 
         worlds = sorted(worlds,key=lambda k:k["ping"])
-        pingColors = {range(0,25):"#00ff00",range(26,50):"#00a500",range(51,100):"#b2f733",range(101,150):"#ffe500",range(151,200):"#ff8800"}
+        pingColors = {range(0,26):"#00ff00",range(26,51):"#00a500",range(51,101):"#b2f733",range(101,151):"#ffe500",range(151,200):"#ff8800"}
         
         for world in worlds:
             key = [i for i in list(pingColors.keys()) if world["ping"] in i]
@@ -813,7 +850,17 @@ class Worker(QtCore.QObject):
     @QtCore.pyqtSlot()
     def createFriendLabel(self,data):
         self.friendLabelReady.emit(data)
-        
+
+
+class SettingsWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowIcon(qtawesome.icon(
+            'fa5s.cog',
+            color='#303030'
+        ))
+
+        self.setLayout(QVBoxLayout())
 
 class Window(QMainWindow):
     fetchWorldsSignal = QtCore.pyqtSignal()
@@ -827,7 +874,7 @@ class Window(QMainWindow):
 
     def initMain(self):
         uic.loadUi("main.ui",self)
-        self.setWindowIcon(QIcon("icon.ico"))
+        self.setWindowIcon(QIcon(os.path.join("images","icon.ico")))
         self.setStyleSheet("""
             #MainWindow {
                 background-image:url('images/osrs.png');
@@ -854,6 +901,22 @@ class Window(QMainWindow):
         """)
 
         self.con = Console()
+        self.settingsWindow = SettingsWindow()
+
+        self.settingsButton = QPushButton('')
+        self.settingsButton.resize(24,24)
+        self.settingsButton.setFlat(True)
+        self.settingsButton.setIcon(qtawesome.icon(
+            'fa5s.cog',
+            color='#dddddd'
+        ))
+        self.settingsButton.setStyleSheet('''
+    QPushButton:pressed {
+        border:none !important;
+        outline:none !important;
+        background:none !important;
+    }
+''')
         
         self.createWorkerThread()
 
@@ -865,6 +928,7 @@ class Window(QMainWindow):
         self.freeWorldBox.clicked.connect(lambda:self.checkBoxClicked(self.freeWorldBox))
         self.clearBtn.pressed.connect(lambda:self.pressBtn(self.clearBtn))
         self.checkBtn.pressed.connect(lambda:self.pressBtn(self.checkBtn))
+        self.settingsButton.pressed.connect(self.displaySettings)
         self.clearBtn.released.connect(self.clear)
         self.checkBtn.released.connect(self.check)
         self.setFixedSize(335,565)
@@ -874,9 +938,19 @@ class Window(QMainWindow):
         self.informationBox.hide()
         index = self.mainFrame.layout().indexOf(self.informationBox)
         self.mainFrame.layout().insertWidget(index,self.con)
-        self.titleLabel.setAlignment(QtCore.Qt.AlignCenter)
+        
+        self.settingsButton.setParent(self.mainFrame)
 
+    def showEvent(self,event):
+        self.settingsButton.move(
+            self.titleLabel.x()+(self.titleLabel.width())-(self.settingsButton.width()),
+            self.titleLabel.y()+(self.titleLabel.height())-(self.settingsButton.height())
+        )
+        print(self.settingsButton.geometry(),self.titleLabel.geometry())
 
+    def displaySettings(self):
+        self.settingsWindow.show()
+        
     def createWorkerThread(self):
         self.thread = QtCore.QThread()
         self.worldRetriever = WorldFetcher()
@@ -943,7 +1017,7 @@ class Window(QMainWindow):
     def check(self):
         updateStyle(self.checkBtn)
         if self.freeWorldBox.isChecked() or self.memberWorldBox.isChecked():
-            #self.con.clearErrors([self.typeSelectError])
+            self.con.clearErrors([self.typeSelectError])
             #self.typeSelectError = False
             #self.con.worldFetchProgress.setFormat("Retrieving world data... (%p%)")
             #QtCore.QMetaObject.invokeMethod(self.worldRetriever,"run")
